@@ -6,6 +6,8 @@ import * as Location from 'expo-location';
 import * as FileSystem from 'expo-file-system/legacy';
 import { appendPoint } from './db';
 
+import { StickyNotification } from './utils/StickyNotification';
+
 export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 const ACTIVE_FILE = FileSystem.documentDirectory + 'active.json';
 
@@ -20,6 +22,7 @@ type ActivePayload = {
 };
 
 const IS_WEB = Platform.OS === 'web';
+const IS_ANDROID = Platform.OS === 'android';
 
 // ------- small FS helpers -------
 async function readActive(): Promise<ActivePayload | null> {
@@ -115,6 +118,13 @@ if (!IS_WEB) {
   });
 }
 
+// Android notification
+
+export async function updateStickyFromUI(title: string, body: string) {
+  if (Platform.OS !== 'android') return;
+  try { await StickyNotification.update(title, body); } catch {}
+}
+
 // ------- public API (start/stop/switch/update) -------
 export async function startBackground(
   trackId: string,
@@ -138,6 +148,9 @@ export async function startBackground(
       BACKGROUND_LOCATION_TASK,
       profileOptions(desiredProfile)
       );
+    if (Platform.OS === 'android') {
+      try { await StickyNotification.show('Heidestein', statusText(status)); } catch {}
+    }
   } else {
     // If already running, update options in-place
     try {
@@ -146,6 +159,9 @@ export async function startBackground(
         BACKGROUND_LOCATION_TASK,
         profileOptions(desiredProfile)
         );
+      if (Platform.OS === 'android') {
+        try { await StickyNotification.update('Heidestein', statusText(status)); } catch {}
+      }
     } catch {
       try {
         await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
@@ -153,6 +169,9 @@ export async function startBackground(
           BACKGROUND_LOCATION_TASK,
           profileOptions(desiredProfile)
           );
+        if (Platform.OS === 'android') {
+          try { await StickyNotification.show('Heidestein', statusText(status)); } catch {}
+        }
       } catch (e2) {
         console.warn('[BG] restart updates failed', e2);
       }
@@ -181,6 +200,12 @@ export async function switchBackgroundProfile(profile: Profile) {
       BACKGROUND_LOCATION_TASK,
       profileOptions(profile)
       );
+    if (Platform.OS === 'android') {
+      try {
+        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
+        await StickyNotification.update('Heidestein', body);
+      } catch {}
+    }
   } catch {
     try {
       const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
@@ -188,6 +213,12 @@ export async function switchBackgroundProfile(profile: Profile) {
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, profileOptions(profile));
     } catch (e2) {
       console.warn('[BG] switch profile failed', e2);
+    }
+    if (Platform.OS === 'android') {
+      try {
+        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
+        await StickyNotification.update('Heidestein', body);
+      } catch {}
     }
   }
 }
@@ -211,12 +242,24 @@ export async function setForegroundStatus(status: Status) {
     // Try to update the running foreground service in place
     // @ts-ignore
     await Location.updateForegroundServiceOptionsAsync(BACKGROUND_LOCATION_TASK, opts);
+    if (Platform.OS === 'android') {
+      try {
+        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
+        await StickyNotification.update('Heidestein', body);
+      } catch {}
+    }
   } catch (e) {
     // Some SDKs/ROMs ignore in-place updates → force a refresh by restarting updates
     try {
       const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
+      if (Platform.OS === 'android') {
+        try {
+          const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
+          await StickyNotification.update('Heidestein', body);
+        } catch {}
+      }
     } catch (e2) {
       console.warn('[BG] setForegroundStatus hard refresh failed', e2);
     }
@@ -228,6 +271,9 @@ export async function stopBackground() {
   try {
     const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    if (Platform.OS === 'android') {
+      try { await StickyNotification.hide(); } catch {}
+    }
   } catch (e) {
     console.warn('[BG] stop updates failed (ignored)', e);
   }

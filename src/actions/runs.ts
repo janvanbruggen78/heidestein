@@ -1,6 +1,6 @@
 // src/actions/runs.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { deleteRun, listRuns } from '../db';
+import { deleteRun, listTracks } from '../db';
 import { stopBackground } from '../BackgroundTask';
 
 // keep in sync with TrackingScreen
@@ -11,7 +11,7 @@ type Options = {
   stopBg?: boolean;
   /** Clear ACTIVE_KEY from AsyncStorage. Default: true */
   clearActiveKey?: boolean;
-  /** Return the refreshed list of runs after delete. Default: true */
+  /** Return the refreshed list of tracks after delete. Default: true */
   returnList?: boolean;
 };
 
@@ -30,8 +30,8 @@ export async function safeDeleteRun(trackId: string, opts: Options = {}): Promis
   await deleteRun(trackId);
 }
 
-export async function safeDeleteRunAndList(trackId: string, opts: Options = {}): Promise<import('../db').RunMeta[]> {
+export async function safeDeleteRunAndList(trackId: string, opts: Options = {}): Promise<import('../db').TrackMeta[]> {
   await safeDeleteRun(trackId, opts);
   // 3) Return fresh archive data
-  return await listRuns();
+  return await listTracks();
 }
