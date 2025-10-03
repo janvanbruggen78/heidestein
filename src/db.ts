@@ -256,6 +256,28 @@ export async function setTrackLabel(trackId: string, label: string | null): Prom
     );
 }
 
+export async function deleteTrack(trackId: string): Promise<void> {
+  const db = await getDb();
+  try {
+    await db.execAsync("BEGIN IMMEDIATE;");
+
+    // Be robust across platforms:
+    // 1) Explicitly delete children for web polyfills (FKs may not be enforced)
+    await db.runAsync(`DELETE FROM points WHERE track_id = ?`, [trackId]);
+    await db.runAsync(`DELETE FROM track_labels WHERE track_id = ?`, [trackId]);
+
+    // 2) Delete the parent row (on native SQLite this would also cascade points)
+    await db.runAsync(`DELETE FROM tracks WHERE id = ?`, [trackId]);
+
+    await db.execAsync("COMMIT;");
+  } catch (e) {
+    try { await db.execAsync("ROLLBACK;"); } catch {}
+    console.log("[DB] deleteTrack failed", e);
+    throw e;
+  }
+}
+
+
 // ---------- Utils ----------
 export function haversine(
   a: { latitude: number; longitude: number },

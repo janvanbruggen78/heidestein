@@ -15,9 +15,9 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
       val i = Intent(rc, TrackingService::class.java).apply {
         action = TrackingService.ACTION_START_OR_UPDATE
         putExtra("title", opts.getString("title") ?: "Heidestein")
-        putExtra("body", opts.getString("body") ?: "Recording your movement…")
-        putExtra("intervalMs", if (opts.hasKey("intervalMs")) opts.getDouble("intervalMs").toLong() else 5000L)
-        putExtra("distanceM", if (opts.hasKey("distanceM")) opts.getDouble("distanceM").toFloat() else 6f)
+        if (opts.hasKey("intervalMs")) putExtra("intervalMs", opts.getDouble("intervalMs").toLong())
+        if (opts.hasKey("distanceM")) putExtra("distanceM", opts.getDouble("distanceM").toFloat())
+        if (opts.hasKey("paused")) putExtra("paused", opts.getBoolean("paused"))
       }
       ContextCompat.startForegroundService(rc, i)
       promise.resolve(null)
@@ -32,14 +32,29 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
       val i = Intent(rc, TrackingService::class.java).apply {
         action = TrackingService.ACTION_START_OR_UPDATE
         if (opts.hasKey("title")) putExtra("title", opts.getString("title"))
-        if (opts.hasKey("body")) putExtra("body", opts.getString("body"))
         if (opts.hasKey("intervalMs")) putExtra("intervalMs", opts.getDouble("intervalMs").toLong())
         if (opts.hasKey("distanceM")) putExtra("distanceM", opts.getDouble("distanceM").toFloat())
+        if (opts.hasKey("paused")) putExtra("paused", opts.getBoolean("paused"))
       }
       ContextCompat.startForegroundService(rc, i)
       promise.resolve(null)
     } catch (e: Exception) {
       promise.reject("ERR_NATIVE_UPDATE", e)
+    }
+  }
+
+  @ReactMethod
+  fun updateNotification(title: String, body: String, promise: Promise) {
+    try {
+      val i = Intent(rc, TrackingService::class.java).apply {
+        action = TrackingService.ACTION_UPDATE_NOTIFICATION
+        putExtra("title", title)
+        putExtra("body", body) // body is ignored when minimal/paused logic applies
+      }
+      ContextCompat.startForegroundService(rc, i)
+      promise.resolve(null)
+    } catch (e: Exception) {
+      promise.reject("ERR_NATIVE_UPDATE_NOTIF", e)
     }
   }
 
@@ -55,4 +70,8 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
       promise.reject("ERR_NATIVE_STOP", e)
     }
   }
+
+  // Stubs to satisfy NativeEventEmitter warnings (even if you use DeviceEventEmitter)
+  @ReactMethod fun addListener(eventName: String) {}
+  @ReactMethod fun removeListeners(count: Int) {}
 }

@@ -13,7 +13,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import RouteCanvas from '../components/RouteCanvas';
-import { formatDistance, formatDuration, formatSpeed } from '../utils/format';
+import { 
+  formatDistance, 
+  formatDuration, 
+  formatSpeed 
+} from '../utils/format';
+import { 
+  updateNativeNotification 
+} from '../utils/NativeTracking';
 import {
   appendPoint,
   createTrack,
@@ -63,6 +70,19 @@ function ensureNotificationPermission() {
   if (Platform.OS !== 'android') return Promise.resolve(true);
   return Notifications.getPermissionsAsync().then(s => s.granted || Notifications.requestPermissionsAsync().then(r => r.granted ?? false));
 }
+
+// useEffect(() => {
+//   if (Platform.OS !== 'android') return;
+//   const body = `${formatDistance(distance, unitSystem)} • ${formatDuration(durationMs)}`;
+
+//   // diff + throttle (≈2s)
+//   const now = Date.now();
+//   if (body !== lastBodyRef.current && now - lastPushRef.current > 2000) {
+//     lastBodyRef.current = body; lastPushRef.current = now;
+//     updateNativeNotification(title, body).catch(() => {});
+//   }
+// }, [title, distance, durationMs, unitSystem]);
+
 async function ensureBgPreciseOrPrompt(): Promise<{ ok: boolean; fg: Location.PermissionStatus; bg?: Location.PermissionStatus }> {
   let fgPerm = await Location.getForegroundPermissionsAsync();
   if (fgPerm.status !== 'granted') {
@@ -72,6 +92,7 @@ async function ensureBgPreciseOrPrompt(): Promise<{ ok: boolean; fg: Location.Pe
   if (Platform.OS === 'android') {
     let bgPerm = await Location.getBackgroundPermissionsAsync();
     if (bgPerm.status !== 'granted') bgPerm = await Location.requestBackgroundPermissionsAsync();
+    
     // if (bgPerm.status !== 'granted') {
     //   Alert.alert(
     //     'Allow background location',
@@ -350,7 +371,10 @@ export default function TrackingScreen() {
 
         setWriter?.('fg').catch?.(() => {});
       } else {
-        await startBackground(id, seg, 'paused');
+        await startBackground(id, seg, 'paused', {
+          intervalMs: intervalMs,
+          distanceM: 5,
+        });
         await setForegroundStatus('paused');
         try { watcherRef.current?.remove?.(); } catch {}
         watcherRef.current = null;
@@ -368,11 +392,12 @@ export default function TrackingScreen() {
   // Start / Pause / Resume / Stop
   const startTrackingHandler = useCallback(async () => {
     // Double check on Background to aggresively avoid duplicates
-    await stopBackground().catch(() => {});
+    //await stopBackground().catch(() => {});
     if (pressGuardRef.current) return;
     pressGuardRef.current = true;
     try {
-      stopPrewarm(); setPrewarmFix(null);
+      stopPrewarm(); 
+      setPrewarmFix(null);
 
       const res = await ensureBgPreciseOrPrompt();
       if (!res.ok) return;
@@ -453,13 +478,14 @@ export default function TrackingScreen() {
     console.log(tracking);
     console.log(paused);
     if (pressGuardRef.current) return;
-    console.log('hi')
     if (!tracking || paused) return;
-    console.log('hi')
 
     pressGuardRef.current = true;
     try {
-      await switchBackgroundProfile('paused');
+      await switchBackgroundProfile('paused', {
+        intervalMs: intervalMs,
+        distanceM: 5,
+      });
       await setForegroundStatus('paused');
       await AsyncStorage.mergeItem(ACTIVE_KEY, JSON.stringify({ autoResume: false }));
 
@@ -537,6 +563,10 @@ export default function TrackingScreen() {
       );
     pressGuardRef.current = false;
     await setForegroundStatus('tracking');
+    await switchBackgroundProfile('tracking', {
+        intervalMs: intervalMs,
+        distanceM: 5,
+      });
   }, [appendPointBoth, intervalMs, tracking, paused]);
 
   const stopHandler = useCallback(async () => {
