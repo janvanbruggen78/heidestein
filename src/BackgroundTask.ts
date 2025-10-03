@@ -1,36 +1,60 @@
-// BackgroundTask.ts — Expo-only foreground service (no Notifee), single-writer guard
+// src/BackgroundTask.ts
+// Android: true native Foreground Service (emits events -> JS writes)
+// iOS/Web: Expo TaskManager + Location foreground service
+// Single-writer guard via active.json
 
 import { Platform } from 'react-native';
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import * as FileSystem from 'expo-file-system/legacy';
 import { appendPoint } from './db';
-
-import { StickyNotification } from './utils/StickyNotification';
+import {
+  startNativeTracking,
+  updateNativeOptions,
+  stopNativeTracking,
+  subscribeNativeLocations,
+  type StartOpts as NativeStartOpts,
+  type NativeLoc,
+} from './utils/NativeTracking';
 
 export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
-const ACTIVE_FILE = FileSystem.documentDirectory + 'active.json';
 
 type Profile = 'tracking' | 'paused';
-type Status = 'tracking' | 'paused';
+type Status  = 'tracking' | 'paused';
 
 type ActivePayload = {
   trackId: string;
   segmentIndex: number;
-  mode?: Profile;            // tracking | paused
-  writer?: 'fg' | 'bg';      // single-writer: foreground screen vs background task
+  mode: Profile;           // 'tracking' | 'paused'
+  writer: 'fg' | 'bg';     // single-writer: foreground screen vs background task
 };
 
 const IS_WEB = Platform.OS === 'web';
 const IS_ANDROID = Platform.OS === 'android';
 
-// ------- small FS helpers -------
+const ACTIVE_FILE = FileSystem.documentDirectory + 'active.json';
+
+// -------------------- Small state + FS helpers --------------------
+let memActive: ActivePayload = {
+  trackId: '',
+  segmentIndex: 0,
+  mode: 'tracking',
+  writer: 'bg',
+};
+
 async function readActive(): Promise<ActivePayload | null> {
   try {
     const info = await FileSystem.getInfoAsync(ACTIVE_FILE);
     if (!info.exists) return null;
     const raw = await FileSystem.readAsStringAsync(ACTIVE_FILE);
-    return JSON.parse(raw) as ActivePayload;
+    const parsed = JSON.parse(raw) as Partial<ActivePayload>;
+    // ensure defaults
+    return {
+      trackId: parsed.trackId ?? '',
+      segmentIndex: parsed.segmentIndex ?? 0,
+      mode: (parsed.mode ?? 'tracking') as Profile,
+      writer: (parsed.writer ?? 'bg') as 'fg' | 'bg',
+    };
   } catch {
     return null;
   }
@@ -38,17 +62,15 @@ async function readActive(): Promise<ActivePayload | null> {
 
 async function patchActiveFile(patch: Partial<ActivePayload>) {
   try {
-    const current =
-    (await readActive()) ??
-    ({ trackId: '', segmentIndex: 0, mode: 'tracking', writer: 'bg' } as ActivePayload);
-    const next = { ...current, ...patch };
-    await FileSystem.writeAsStringAsync(ACTIVE_FILE, JSON.stringify(next));
+    const current = (await readActive()) ?? memActive;
+    memActive = { ...current, ...patch };
+    await FileSystem.writeAsStringAsync(ACTIVE_FILE, JSON.stringify(memActive));
   } catch (e) {
     console.warn('[BG] patchActiveFile failed', e);
   }
 }
 
-// ------- public helpers called from UI -------
+// -------------------- Public helpers for UI --------------------
 export async function setActiveMeta(trackId: string, segmentIndex: number) {
   await patchActiveFile({ trackId, segmentIndex });
 }
@@ -59,225 +81,255 @@ export async function setBgMode(mode: Profile) {
   await patchActiveFile({ mode });
 }
 
-// ------- UI strings -------
+// -------------------- Display text helpers --------------------
 function statusText(s: Status) {
-  switch (s) {
-  case 'tracking': return 'Recording your movement in the background';
-  case 'paused':   return 'Paused — keeping service alive';
-  }
+  return s === 'paused'
+    ? 'Paused — keeping service alive'
+    : 'Recording your movement in the background';
 }
 
-// ------- location profiles (Expo FS) -------
+/** UI can push distance • duration to the (single) notification */
+export async function updateForegroundText(title: string, body: string) {
+  if (IS_ANDROID) {
+    await updateNativeOptions({ title, body });
+    return;
+  }
+  // iOS: no visible FGS notification; Android-only in practice
+}
+
+// -------------------- Profiles --------------------
 function profileOptions(p: Profile): Location.LocationTaskOptions {
   const paused = p === 'paused';
   return {
     accuracy: paused ? Location.Accuracy.Balanced : Location.Accuracy.High,
-    timeInterval: paused ? 60000 : 2000,
-    distanceInterval: paused ? 50 : 6,
+    timeInterval: paused ? 60000 : 5000,          // ms
+    distanceInterval: paused ? 50 : 6,            // meters
     pausesUpdatesAutomatically: false,
     activityType: paused ? Location.ActivityType.Other : Location.ActivityType.Fitness,
     // @ts-expect-error: legacy typings for Android override
     accuracyAndroid: paused ? Location.Accuracy.Balanced : Location.Accuracy.High,
-    foregroundServiceType: 'location', // important on Android 12+
+    foregroundServiceType: 'location',
     foregroundService: {
-      notificationTitle: 'Route Tracker',
+      notificationTitle: 'Heidestein',
       notificationBody: statusText(paused ? 'paused' : 'tracking'),
       killServiceOnDestroy: true,
     },
   };
 }
 
-// ------- background task (Expo TaskManager) -------
-if (!IS_WEB) {
+// -------------------- Android: wire native events -> appendPoint --------------------
+let nativeUnsub: (() => void) | null = null;
+function ensureAndroidListener() {
+  if (!IS_ANDROID) return;
+  if (nativeUnsub) return;
+  nativeUnsub = subscribeNativeLocations(async (loc: NativeLoc) => {
+    // Respect guards
+    if (memActive.mode === 'paused') return;
+    if (memActive.writer === 'fg') return;
+
+    const { latitude, longitude, accuracy, speed, altitude, ts } = loc || {};
+    if (typeof latitude === 'number' && typeof longitude === 'number') {
+      try {
+        await appendPoint(memActive.trackId, memActive.segmentIndex, {
+          latitude,
+          longitude,
+          ts: typeof ts === 'number' ? ts : Date.now(),
+          accuracy: typeof accuracy === 'number' ? accuracy : null,
+          speed: typeof speed === 'number' ? speed : null,
+          altitude: typeof altitude === 'number' ? altitude : null,
+        });
+      } catch (e) {
+        console.warn('[BG] appendPoint (native event) failed', e);
+      }
+    }
+  });
+}
+
+// -------------------- iOS only: TaskManager handler --------------------
+if (!IS_WEB && !IS_ANDROID) {
   TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
-    if (error) { console.warn('[BG] error:', error); return null; }
+    if (error) { console.warn('[BG] TM error:', error); return null; }
     const { locations } = (data as any) || {};
     if (!locations?.length) return null;
+    if (memActive.mode === 'paused' || memActive.writer === 'fg') return null;
 
     try {
-      const active = await readActive();
-      if (!active) return null;
-
-      const { trackId, segmentIndex, mode, writer } = active;
-
-      // Single-writer + paused guard
-      if (mode === 'paused') return null;
-      if (writer === 'fg') return null;
-
       for (const loc of locations) {
         const { latitude, longitude, accuracy, speed, altitude } = loc?.coords || {};
         if (typeof latitude === 'number' && typeof longitude === 'number') {
           const ts = typeof loc?.timestamp === 'number' ? loc.timestamp : Date.now();
-          await appendPoint(trackId, segmentIndex, { latitude, longitude, ts, accuracy, speed, altitude });
+          await appendPoint(memActive.trackId, memActive.segmentIndex, {
+            latitude, longitude, ts,
+            accuracy: typeof accuracy === 'number' ? accuracy : null,
+            speed: typeof speed === 'number' ? speed : null,
+            altitude: typeof altitude === 'number' ? altitude : null,
+          });
         }
       }
     } catch (e) {
-      console.warn('[BG] write failed', e);
+      console.warn('[BG] appendPoint (iOS TM) failed', e);
     }
     return null;
   });
 }
 
-// Android notification
-
-export async function updateStickyFromUI(title: string, body: string) {
-  if (Platform.OS !== 'android') return;
-  try { await StickyNotification.update(title, body); } catch {}
+// -------------------- iOS FGS ops serialization (avoid races) --------------------
+let __fgOp: Promise<any> = Promise.resolve();
+function runFgOp<T>(fn: () => Promise<T>): Promise<T> {
+  const chained = __fgOp.then(fn, fn);
+  __fgOp = chained.then(() => undefined, () => undefined);
+  return chained;
 }
 
-// ------- public API (start/stop/switch/update) -------
+// -------------------- Public API --------------------
 export async function startBackground(
   trackId: string,
   segmentIndex: number,
   status: Status = 'tracking'
-  ) {
-  if (IS_WEB) return;
+) {
+  await patchActiveFile({ trackId, segmentIndex, mode: status });
 
-  // Persist meta first (so the task reads correct state on its very first tick)
-  await patchActiveFile({
-    trackId,
-    segmentIndex,
-    mode: status, // status is now either 'tracking' or 'paused'
-  });
-
-  const desiredProfile: Profile = status;
-  const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-
-  if (!running) {
-    await Location.startLocationUpdatesAsync(
-      BACKGROUND_LOCATION_TASK,
-      profileOptions(desiredProfile)
-      );
-    if (Platform.OS === 'android') {
-      try { await StickyNotification.show('Heidestein', statusText(status)); } catch {}
-    }
-  } else {
-    // If already running, update options in-place
+  if (IS_ANDROID) {
+    ensureAndroidListener();
+    const nativeOpts: NativeStartOpts = status === 'paused'
+      ? { title: 'Heidestein', body: statusText('paused'),   intervalMs: 60000, distanceM: 50 }
+      : { title: 'Heidestein', body: statusText('tracking'), intervalMs: 5000,  distanceM: 6  };
     try {
-      // @ts-ignore API shape varies
-      await Location.updateForegroundServiceOptionsAsync(
-        BACKGROUND_LOCATION_TASK,
-        profileOptions(desiredProfile)
-        );
-      if (Platform.OS === 'android') {
-        try { await StickyNotification.update('Heidestein', statusText(status)); } catch {}
-      }
-    } catch {
+      await startNativeTracking(nativeOpts);
+    } catch (e) {
+      console.warn('[BG] startNativeTracking failed', e);
+    }
+    return;
+  }
+
+  // iOS: use Expo Location
+  try {
+    const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    const opts = profileOptions(status);
+    if (!running) {
+      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
+    } else {
       try {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        await Location.startLocationUpdatesAsync(
-          BACKGROUND_LOCATION_TASK,
-          profileOptions(desiredProfile)
-          );
-        if (Platform.OS === 'android') {
-          try { await StickyNotification.show('Heidestein', statusText(status)); } catch {}
+        // @ts-ignore
+        await Location.updateForegroundServiceOptionsAsync(BACKGROUND_LOCATION_TASK, opts);
+      } catch {
+        try {
+          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
+        } catch (e2) {
+          console.warn('[BG] iOS restart updates failed', e2);
         }
-      } catch (e2) {
-        console.warn('[BG] restart updates failed', e2);
       }
     }
+  } catch (e) {
+    console.warn('[BG] iOS start failed', e);
   }
 }
 
 let lastProfileSwitch = 0;
 const SWITCH_DEBOUNCE_MS = 10_000;
 
+/** Switch between 'tracking' and 'paused'. */
 export async function switchBackgroundProfile(profile: Profile) {
-  if (IS_WEB) return;
+  await patchActiveFile({ mode: profile });
 
-  const now = Date.now();
-  if (now - lastProfileSwitch < SWITCH_DEBOUNCE_MS) {
-    // avoid flapping service options on finicky ROMs
+  if (IS_ANDROID) {
+    const body = statusText(profile);
+    const opts = profile === 'paused'
+      ? { title: 'Heidestein', body, intervalMs: 60000, distanceM: 50 }
+      : { title: 'Heidestein', body, intervalMs: 5000,  distanceM: 6  };
+    try {
+      await updateNativeOptions(opts);
+    } catch (e) {
+      console.warn('[BG] updateNativeOptions failed', e);
+    }
     return;
   }
-  lastProfileSwitch = now;
 
-  await setBgMode(profile);
+  // iOS: debounce rapid tracking tweaks
+  const now = Date.now();
+  if (profile === 'tracking') {
+    if (now - lastProfileSwitch < SWITCH_DEBOUNCE_MS) return;
+    lastProfileSwitch = now;
+  }
 
-  try {
+  await runFgOp(async () => {
     // @ts-ignore
     await Location.updateForegroundServiceOptionsAsync(
       BACKGROUND_LOCATION_TASK,
       profileOptions(profile)
-      );
-    if (Platform.OS === 'android') {
-      try {
-        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
-        await StickyNotification.update('Heidestein', body);
-      } catch {}
-    }
-  } catch {
+    );
+  }).catch(async () => {
     try {
       const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, profileOptions(profile));
     } catch (e2) {
-      console.warn('[BG] switch profile failed', e2);
+      console.warn('[BG] iOS switch profile failed', e2);
     }
-    if (Platform.OS === 'android') {
-      try {
-        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
-        await StickyNotification.update('Heidestein', body);
-      } catch {}
-    }
-  }
+  });
 }
 
+/** Update notification text based on a UI status (rarely used; prefer updateForegroundText). */
 export async function setForegroundStatus(status: Status) {
-  if (IS_WEB) return;
+  await patchActiveFile({ mode: status });
 
-  const profile: Profile = status === 'paused' ? 'paused' : 'tracking';
-  await setBgMode(profile);
+  if (IS_ANDROID) {
+    try {
+      await updateNativeOptions({ title: 'Heidestein', body: statusText(status) });
+    } catch (e) {
+      console.warn('[BG] setForegroundStatus (android) failed', e);
+    }
+    return;
+  }
 
+  // iOS: try to refresh FGS text
   const opts = {
-    ...profileOptions(profile),
+    ...profileOptions(status),
     foregroundService: {
-      notificationTitle: 'Route Tracker',
+      notificationTitle: 'Heidestein',
       notificationBody: statusText(status),
       killServiceOnDestroy: true,
     },
   } as Location.LocationTaskOptions;
 
-  try {
-    // Try to update the running foreground service in place
+  await runFgOp(async () => {
     // @ts-ignore
     await Location.updateForegroundServiceOptionsAsync(BACKGROUND_LOCATION_TASK, opts);
-    if (Platform.OS === 'android') {
-      try {
-        const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
-        await StickyNotification.update('Heidestein', body);
-      } catch {}
-    }
-  } catch (e) {
-    // Some SDKs/ROMs ignore in-place updates → force a refresh by restarting updates
+  }).catch(async () => {
     try {
       const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
-      if (Platform.OS === 'android') {
-        try {
-          const body = profile === 'paused' ? statusText('paused') : statusText('tracking');
-          await StickyNotification.update('Heidestein', body);
-        } catch {}
-      }
     } catch (e2) {
-      console.warn('[BG] setForegroundStatus hard refresh failed', e2);
+      console.warn('[BG] iOS setForegroundStatus refresh failed', e2);
     }
-  }
+  });
 }
 
-export async function stopBackground() {
-  if (IS_WEB) return;
-  try {
-    const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    if (Platform.OS === 'android') {
-      try { await StickyNotification.hide(); } catch {}
+/** Stop background tracking; optionally clear active.json (default true). */
+export async function stopBackground(opts?: { clearActive?: boolean }) {
+  const clearActive = opts?.clearActive ?? true;
+
+  if (IS_ANDROID) {
+    try {
+      await stopNativeTracking();
+    } catch (e) {
+      console.warn('[BG] stopNativeTracking failed (ignored)', e);
     }
-  } catch (e) {
-    console.warn('[BG] stop updates failed (ignored)', e);
+    if (nativeUnsub) { nativeUnsub(); nativeUnsub = null; }
+  } else if (!IS_WEB) {
+    try {
+      const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    } catch (e) {
+      console.warn('[BG] iOS stop updates failed (ignored)', e);
+    }
   }
-  try {
-    await FileSystem.deleteAsync(ACTIVE_FILE, { idempotent: true });
-  } catch {}
+
+  if (clearActive) {
+    try { await FileSystem.deleteAsync(ACTIVE_FILE, { idempotent: true }); } catch {}
+    // reset memory too
+    memActive = { trackId: '', segmentIndex: 0, mode: 'tracking', writer: 'bg' };
+  }
 }
