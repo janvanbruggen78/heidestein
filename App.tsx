@@ -1,20 +1,42 @@
+// App.tsx
+import React, { useEffect } from 'react';
+import * as SystemUI from 'expo-system-ui';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import * as NavigationBar from 'expo-navigation-bar';
 
-export default function App() {
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import AppNavigator from './src/navigation/AppNavigator';
+import { SettingsProvider, useSettings } from './src/settings/SettingsContext';
+
+import './src/BackgroundTask'; // <-- registers BACKGROUND_LOCATION_TASK
+
+
+// Keep navigator & screens simple; do theme glue here:
+function AppInner() {
+  const { theme } = useSettings();
+
+  useEffect(() => {
+    const bg = theme === 'dark' ? '#000000' : '#fff';
+    SystemUI.setBackgroundColorAsync(bg).catch(() => {});
+    NavigationBar.setBackgroundColorAsync(bg).catch(() => {});
+    NavigationBar.setButtonStyleAsync(theme === 'dark' ? 'light' : 'dark').catch(() => {});
+  }, [theme]);
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <AppNavigator />
+    </>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default function App() {
+  return (
+    <SettingsProvider>
+      <SafeAreaProvider>
+        <AppInner />
+      </SafeAreaProvider>
+    </SettingsProvider>
+  );
+}
