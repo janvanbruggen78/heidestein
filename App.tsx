@@ -9,10 +9,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import { SettingsProvider, useSettings } from './src/settings/SettingsContext';
 
-import './src/BackgroundTask'; // <-- registers BACKGROUND_LOCATION_TASK
+import './src/services/background';
 
 
-// Keep navigator & screens simple; do theme glue here:
 function AppInner() {
   const { theme } = useSettings();
 

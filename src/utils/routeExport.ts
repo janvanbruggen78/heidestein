@@ -95,7 +95,7 @@ export function buildSVG(
 
     const color = text.color ?? '#111';
     const font = text.fontFamily ?? 'serif';
-    const titleSize = text.titleSize ?? 36;
+    const titleSize = text.titleSize ?? 48;
     const subtitleSize = text.subtitleSize ?? 24;
 
     const yBottom = height - margin;

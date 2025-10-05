@@ -1,7 +1,4 @@
-// db.ts
-// Clean-install schema for Heidestein (no migrations).
-// Tables: tracks, points, track_labels
-
+//TODO - Add versioning/upgrade strategy (PRAGMA)
 import * as SQLite from "expo-sqlite";
 
 type DB = SQLite.SQLiteDatabase;
