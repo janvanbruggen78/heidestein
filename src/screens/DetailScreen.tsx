@@ -140,13 +140,14 @@ export default function DetailScreen() {
     const segments = await loadTrackPoints(trackId);
     const titleText = (label?.trim() || trackId);
     const subtitleText = `${formatDistance(distance, unitSystem)} • ${formatDuration(durationMs)}`;
-    const svg = buildSVG(segments, 1024, 1754, 24, {
+    const svg = buildSVG(segments, 2480, 3508, 24, {
       title: titleText,
       subtitle: subtitleText,
       fontFamily: 'serif',
       color: '#111',
       titleSize: 36,
       subtitleSize: 34,
+      margin: 48,
     });
 
     await saveAndShare(svg, `route_${trackId}.svg`, 'image/svg+xml');

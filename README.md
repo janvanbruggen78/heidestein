@@ -1,13 +1,33 @@
-# 1) Update Expo itself to the latest for your SDK line
-npx expo install expo@latest
+Heidestein
 
-# 2) Let Expo fix peer versions (RN, RN-Web, etc.)
-npx expo install --fix
+ReactNative location tracking for minimal distractions while hiking
 
-# 3) Update TypeScript + React types
-npm i -D typescript@latest @types/react@latest @types/react-dom@latest
+//short cuts
+./gradlew  assembleRelease   
 
-# 4) Clear caches & restart
-rm -rf node_modules package-lock.json
-npm install
-npx expo start -c
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp install -r app/build/outputs/apk/release/app-release.apk
+
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp logcat | grep -E "\[BG\]|\[DBG\]|ReactNativeJS"    
+
+//logging
+
+Start logging on device (background)
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp shell "nohup logcat -v time > /sdcard/Documents/walk.log 2>&1 &"
+
+Check if logcat is still running
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp shell "ps | grep logcat"
+
+Stop logging (kill logcat)
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp shell "killall logcat"
+
+Pull log file to computer
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp pull /sdcard/Documents/walk.log .
+
+Filter pulled log (on Mac)
+grep -E "\[BG\]|\[DBG\]|ReactNativeJS" walk.log > walk.filtered.log
+
+View last 100 lines of filtered log
+tail -n 100 walk.filtered.log
+
+Remove log from device
+adb -s adb-VGPBNVSKYHSS59VO-Aqz8X7._adb-tls-connect._tcp shell "rm /sdcard/Documents/walk.log"
