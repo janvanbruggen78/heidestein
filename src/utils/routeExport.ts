@@ -84,7 +84,7 @@ export function buildSVG(
     .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
     if (!ns.length) return '';
     const d = ns.map((p, i) => `${i ? 'L' : 'M'}${mapX(p.lon)} ${mapY(p.lat)}`).join(' ');
-    return `<path d="${d}" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+    return `<path d="${d}" fill="none" stroke="black" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
   }).join('');
 
   // Optional bottom-left text (title + subtitle)
@@ -95,7 +95,7 @@ export function buildSVG(
 
     const color = text.color ?? '#111';
     const font = text.fontFamily ?? 'serif';
-    const titleSize = text.titleSize ?? 36;
+    const titleSize = text.titleSize ?? 48;
     const subtitleSize = text.subtitleSize ?? 24;
 
     const yBottom = height - margin;

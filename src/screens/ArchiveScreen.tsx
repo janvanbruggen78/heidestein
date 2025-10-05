@@ -1,24 +1,43 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, FlatList, Image, Pressable } from 'react-native';
+// ============================================================================
+// Imports & Types
+// ============================================================================
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, Image, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import type { RootStackParamList } from '../navigation/AppNavigator';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { useSettings } from '../settings/SettingsContext';
-import { haversine, listTracks, loadTrackPoints, type TrackMeta } from '../db';
+import { 
+  haversine, 
+  listTracks, 
+  loadTrackPoints, 
+  type TrackMeta 
+} from '../db/db';
 import styles from '../styles';
 
-type SortKey = 'date_desc' | 'date_asc' | 'dist_desc' | 'dist_asc';
-
+// ============================================================================
+// Component
+// ============================================================================
 export default function ArchiveScreen() {
+  // --------------------------------------------------------------------------
+  // Navigation / Insets / Settings
+  // --------------------------------------------------------------------------
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const { theme } = useSettings();
 
+  // --------------------------------------------------------------------------
+  // State
+  // --------------------------------------------------------------------------
   const [tracks, setTracks] = useState<TrackMeta[]>([]);
-  const [sortKey, setSortKey] = useState<SortKey>('date_desc');
+  const [sortKey, setSortKey] = useState<'date_desc' | 'date_asc' | 'dist_desc' | 'dist_asc'>('date_desc');
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // --------------------------------------------------------------------------
+  // Effects (load data)
+  // --------------------------------------------------------------------------
   useEffect(() => {
     (async () => {
       const rows = await listTracks();
@@ -35,17 +54,20 @@ export default function ArchiveScreen() {
             }
             console.log(total);
             return { ...row, distance: total };
-          } catch(e) {
+          } catch (e) {
             console.log(e);
             return { ...row, distance: row.distance ?? 0 };
           }
-        })
+        }),
       );
       console.log(withDistances);
       setTracks(withDistances);
     })();
   }, []);
 
+  // --------------------------------------------------------------------------
+  // Local Helpers
+  // --------------------------------------------------------------------------
   const startedAtMs = useCallback((r: any): number => {
     // Prefer created/started timestamps; fallback to ISO id
     if (typeof r?.started_at === 'number') return r.started_at;
@@ -54,13 +76,22 @@ export default function ArchiveScreen() {
     return Number.isFinite(t) ? t : 0;
   }, []);
 
-  const formatWhen = useCallback((r: any): string => {
-    const ms = startedAtMs(r);
-    return ms ? new Date(ms).toLocaleString() : '—';
-  }, [startedAtMs]);
+  const formatWhen = useCallback(
+    (r: any): string => {
+      const ms = startedAtMs(r);
+      return ms ? new Date(ms).toLocaleString() : '—';
+    },
+    [startedAtMs],
+  );
 
+  // --------------------------------------------------------------------------
+  // Render
+  // --------------------------------------------------------------------------
   return (
-    <SafeAreaView style={[{ flex: 1 }, theme === 'dark' ? styles.darkBg : styles.lightBg]} edges={['top', 'bottom']}>
+    <SafeAreaView
+      style={[{ flex: 1 }, theme === 'dark' ? styles.darkBg : styles.lightBg]}
+      edges={['top', 'bottom']}
+    >
       <View style={{ flex: 1 }}>
         {/* Logo */}
         <View style={[styles.logoRow(theme), { paddingTop: insets.top }]}>
@@ -76,8 +107,13 @@ export default function ArchiveScreen() {
           <Text style={[styles.title(theme), { flex: 1, textAlign: 'center' }]}>ARCHIVE</Text>
         </View>
 
-        {/* Header controls: Back + Sort dropdown */}
-        <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 }]}>
+        {/* Header controls: Back */}
+        <View
+          style={[
+            styles.header,
+            { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
+          ]}
+        >
           <Pressable onPress={() => navigation.navigate('Tracking')} style={styles.btn(theme)}>
             <Text style={styles.btnText(theme)}>Back</Text>
           </Pressable>
@@ -97,7 +133,7 @@ export default function ArchiveScreen() {
               <Text style={styles.cardTitle}>{formatWhen(item)}</Text>
               <Text style={styles.cardSub}>{((item.distance ?? 0) / 1000).toFixed(2)} km</Text>
             </Pressable>
-            )}
+          )}
           ListEmptyComponent={
             <View style={{ padding: 24, alignItems: 'center' }}>
               <Text style={{ color: theme === 'dark' ? '#aaa' : '#666' }}>No tracks yet</Text>
@@ -106,5 +142,5 @@ export default function ArchiveScreen() {
         />
       </View>
     </SafeAreaView>
-    );
+  );
 }

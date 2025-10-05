@@ -2,7 +2,7 @@
   "expo": {
     "name": "Heidestein",
     "slug": "Heidestein",
-    "version": "1.0.9",
+    "version": "1.0.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -24,7 +24,7 @@
       "bundleIdentifier": "org.stimulusresponse.heidestein"
     },
     "android": {
-      "versionCode": 9,
+      "versionCode": 14,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#fff"
