@@ -346,7 +346,7 @@ function fmtDur(ms: number) {
 
 export async function stopBackground(opts?: { clearActive?: boolean }) {
   const clearActive = opts?.clearActive ?? true;
-  console.log('[BG] stopBackground CALLED', opts, new Error().stack);
+  console.log('[BG] stopBackground CALLED', opts);
 
   if (Platform.OS === 'android') {
     try { await stopNativeTracking(); } catch (e) {

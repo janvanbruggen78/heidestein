@@ -22,11 +22,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import RouteCanvas from '../components/RouteCanvas';
+import { useToast } from '../components/Toast';
 import { formatDistance, formatDuration, formatSpeed } from '../utils/format';
 import { updateNativeNotification } from '../utils/NativeTracking';
 import {
   appendPoint,
   createTrack,
+  deleteTrack,
   finalizeTrack,
   haversine,
   loadTrackPoints,
@@ -97,12 +99,14 @@ async function ensureBgPreciseOrPrompt(): Promise<{
 // ============================================================================
 export default function TrackingScreen() {
   // --------------------------------------------------------------------------
-  // Lifecyle guards / navigation / theme
+  // Lifecyle guards / navigation / theme / toast
   // --------------------------------------------------------------------------
   useKeepAwake();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { intervalMs = 3000, theme, unitSystem } = useSettings();
   const insets = useSafeAreaInsets();
+
+  const { show, Toast } = useToast();
 
   // --------------------------------------------------------------------------
   // State & Refs
@@ -631,11 +635,26 @@ export default function TrackingScreen() {
 
       const id = trackIdRef.current;
       const dist = distance; // derived total
+      const totalPoints = segmentsTs.reduce((n, seg) => n + seg.length, 0);
 
       setTracking(false);
       setPaused(false);
 
-      if (id) await finalizeTrack(id, dist);
+      requestAnimationFrame(() => {
+        if (totalPoints === 0) { 
+          show('No points registered — track discarded.'); 
+        } else { 
+          show('Track saved to archive.');
+        }
+      });
+
+      if (id) {
+        await finalizeTrack(id);
+        if (totalPoints === 0) { 
+          await deleteTrack(id);
+        }
+      }
+      
 
       setSegmentsTs([[]]);
       setSpeed(null);
@@ -726,12 +745,14 @@ export default function TrackingScreen() {
           </View>
         </View>
       </View>
+      {Toast}
     </SafeAreaView>
   );
 }
 
 // ============================================================================
 // Presentational Subcomponents
+// TODO - move to components library
 // ============================================================================
 function Metric({ label, value }: { label: string; value: string }) {
   const { theme } = useSettings();

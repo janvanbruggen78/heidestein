@@ -215,9 +215,9 @@ export default function DetailScreen() {
       subtitle: subtitleText,
       fontFamily: 'serif',
       color: '#111',
-      titleSize: 36,
-      subtitleSize: 34,
-      margin: 48,
+      titleSize: 96,
+      subtitleSize: 48,
+      margin: 120,
     });
 
     await saveAndShare(svg, `route_${trackId}.svg`, 'image/svg+xml');

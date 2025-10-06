@@ -107,12 +107,13 @@ export async function createTrack(customId?: string) {
   return id;
 }
 
-export async function finalizeTrack(id: string, endedAtMs: number): Promise<void> {
+export async function finalizeTrack(id: string): Promise<void> {
   const db = await getDb();
+  const endedAt = Date.now();
   await db.runAsync(
-`UPDATE tracks SET ended_at = ? WHERE id = ?`,
-[endedAtMs, id]
-);
+    `UPDATE tracks SET ended_at = ? WHERE id = ?`,
+    [endedAt, id]
+  );
 }
 
 export async function listTracks(): Promise<TrackMeta[]> {
@@ -121,8 +122,10 @@ export async function listTracks(): Promise<TrackMeta[]> {
     `SELECT t.id AS track_id, t.started_at, t.ended_at, l.label
      FROM tracks t
      LEFT JOIN track_labels l ON l.track_id = t.id
-    ORDER BY t.started_at DESC`
-    );
+     ORDER BY 
+       CASE WHEN t.ended_at IS NULL THEN 1 ELSE 0 END,
+       COALESCE(t.ended_at, t.started_at) DESC`
+  );
   return rows ?? [];
 }
 
