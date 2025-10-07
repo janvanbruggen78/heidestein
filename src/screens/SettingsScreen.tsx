@@ -3,12 +3,13 @@
 // ============================================================================
 import React from 'react';
 import * as Application from 'expo-application';
-import { Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, PlatformImage, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { RootStackParamList } from '../navigation/AppNavigator';
+import { exportDatabase, importDatabase } from '../db/db';
 import { useSettings } from '../settings/SettingsContext';
 import styles from '../styles';
 
@@ -36,7 +37,11 @@ export default function SettingsScreen() {
       style={[{ flex: 1 }, theme === 'dark' ? styles.darkBg : styles.lightBg]}
       edges={['top', 'bottom']}
     >
-      <View style={{ flex: 1 }}>
+      <ScrollView
+        contentContainerStyle={styles.inner}
+        showsVerticalScrollIndicator={false}
+        style={{paddingHorizontal: 20, paddingBottom: 40}}
+        >        
         {/* Logo */}
         <View style={[styles.logoRow(theme), { paddingTop: insets.top }]}>
           <Image
@@ -116,7 +121,44 @@ export default function SettingsScreen() {
         </View>
 
         {/* Version */}
+        
         <View style={styles.section}>
+        <Text style={styles.sectionTitle(theme)}>Backups</Text>
+        <View style={styles.row}>
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                await exportDatabase();
+                Alert.alert('Export complete', Platform.OS === 'android'
+                  ? 'Database saved to your chosen folder.'
+                  : 'Share or save the database from the sheet.');
+              } catch (e:any) {
+                Alert.alert('Export failed', e?.message ?? String(e));
+              }
+            }}
+            style={[styles.pill]}
+          >
+            <Text style={styles.pillText(theme)}>Export database</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                await importDatabase();
+                Alert.alert('Import complete', 'Restart the app to reload the database.');
+              } catch (e) {
+                Alert.alert('Import failed', e?.message ?? String(e));
+              }
+            }}
+            style={[styles.pill]}
+          >
+            <Text style={styles.pillText(theme)}>Import database</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.hint(theme)}>
+          Export creates a .db backup you can store anywhere. Import replaces the current database with a selected file.
+        </Text>
+      </View>
+      <View style={styles.section}>
           <Text
             style={[
               { marginTop: 20, opacity: 0.7 },
@@ -126,7 +168,7 @@ export default function SettingsScreen() {
             v{Application.nativeApplicationVersion} (build {Application.nativeBuildVersion})
           </Text>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
