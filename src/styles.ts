@@ -25,7 +25,10 @@ export default StyleSheet.create({
 
   buttonDisabled: { opacity: 0 },
 
-  buttonPrimary: { backgroundColor: "#4f46e5" },
+  buttonPrimary: { 
+    backgroundColor: "#4f46e5", 
+    borderColor: "transparent"
+  },
 
   buttonText: { color: "#fff", fontWeight: "600" },
 

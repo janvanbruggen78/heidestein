@@ -210,14 +210,13 @@ export default function DetailScreen() {
     const segments = await loadTrackPoints(trackId);
     const titleText = label?.trim() || trackId;
     const subtitleText = `${formatDistance(distance, unitSystem)} • ${formatDuration(durationMs)}`;
-    const svg = buildSVG(segments, 2480, 3508, 24, {
+    const svg = buildSVG(segments, 2480, 3508, 120, {
       title: titleText,
       subtitle: subtitleText,
       fontFamily: 'serif',
       color: '#111',
       titleSize: 96,
-      subtitleSize: 48,
-      margin: 120,
+      subtitleSize: 64,
     });
 
     await saveAndShare(svg, `route_${trackId}.svg`, 'image/svg+xml');
@@ -291,14 +290,14 @@ export default function DetailScreen() {
             <Text style={styles.btnText(theme)}>Back</Text>
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', marginLeft: 'auto' }}>
-            <TouchableOpacity onPress={confirmDelete} style={[styles.btn(theme), { backgroundColor: '#7f1d1d' }]}>
-              <Text style={[styles.btnText(theme), { color: '#fff' }]}>Delete</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={resumeRunAndGoTracking}
-              style={[styles.btn(theme), styles.buttonPrimary, { marginLeft: 8 }]}
+              style={[styles.btn(theme), styles.buttonPrimary]}
             >
-              <Text style={styles.buttonTextPrimary}>Resume</Text>
+              <Text style={[styles.btnText(theme),styles.buttonTextPrimary]}>Resume</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={confirmDelete} style={[styles.btn(theme), { backgroundColor: '#7f1d1d', borderColor: "transparent", marginLeft: 8 }]}>
+              <Text style={[styles.btnText(theme), { color: '#fff' }]}>Delete</Text>
             </TouchableOpacity>
           </View>
         </View>

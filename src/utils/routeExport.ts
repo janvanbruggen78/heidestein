@@ -99,7 +99,7 @@ export function buildSVG(
     const subtitleSize = text.subtitleSize ?? 24;
 
     const yBottom = height - margin;
-    const gap = 4; // small spacing between lines
+    const gap = 32; // small spacing between lines
 
     const hasSub = Boolean(text.subtitle);
     const titleY = hasSub ? (yBottom - (subtitleSize + gap)) : (yBottom - 2);
@@ -109,7 +109,7 @@ export function buildSVG(
     ? `<text x="${margin}" y="${titleY}" text-anchor="start" dominant-baseline="baseline" font-family="${font}" font-size="${titleSize}" fill="${color}">${esc(text.title)}</text>`
     : '';
     const subLine = text.subtitle
-    ? `<text x="${margin}" y="${subtitleY}" text-anchor="start" dominant-baseline="baseline" font-family="${font}" font-size="${subtitleSize}" fill="${color}">${esc(text.subtitle)}</text>`
+    ? `<text x="${margin}" y="${subtitleY}" text-anchor="start" dominant-baseline="baseline" font-family="${font}" font-size="${subtitleSize}" font-style="italic" fill="${color}">${esc(text.subtitle)}</text>`
     : '';
 
     textSvg = titleLine + subLine;

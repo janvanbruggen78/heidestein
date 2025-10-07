@@ -232,7 +232,6 @@ export default function RouteCanvas({ segments, style }: Props) {
       onPanResponderMove: (evt: GestureResponderEvent, gs: PanResponderGestureState) => {
         const ts = touchesToXY(evt);
 
-        // If we started with 1 finger and now have 2, initialize pinch baseline NOW
         if (ts.length === 2 && startRef.current.touches.length < 2) {
           startRef.current.touches = ts;
           startRef.current.startDist = distance(ts[0], ts[1]) || 1;
@@ -303,7 +302,7 @@ export default function RouteCanvas({ segments, style }: Props) {
               key={idx}
               d={d}
               stroke={strokeColor}
-              strokeWidth={3}
+              strokeWidth={2}
               fill="none"
               strokeOpacity={0.9}
             />
