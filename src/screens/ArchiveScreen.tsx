@@ -52,15 +52,13 @@ export default function ArchiveScreen() {
                 total += haversine(seg[i - 1], seg[i]);
               }
             }
-            console.log(total);
             return { ...row, distance: total };
           } catch (e) {
-            console.log(e);
+            console.warn(e);
             return { ...row, distance: row.distance ?? 0 };
           }
         }),
       );
-      console.log(withDistances);
       setTracks(withDistances);
     })();
   }, []);
