@@ -58,8 +58,6 @@ function startNotifLoop() {
 
     const now = Date.now();
     const body = `${fmtKm(notif.distM)} • ${fmtDur(now - (notif.startMs || now))}`;
-    console.log(notif);
-    console.log(body);
     // diff to avoid redundant notify() calls
     if (body !== notif.lastBody) {
       notif.lastBody = body;

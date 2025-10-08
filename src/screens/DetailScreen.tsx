@@ -237,9 +237,7 @@ export default function DetailScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          console.log('Delete');
           await deleteTrack(trackId);
-          console.log('track deleted');
           navigation.navigate('Archive');
         },
       },

@@ -23,6 +23,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import RouteCanvas from '../components/RouteCanvas';
 import { useToast } from '../components/Toast';
+import Metric from '../components/Metric';
+
 import { formatDistance, formatDuration, formatSpeed } from '../utils/format';
 import { updateNativeNotification } from '../utils/NativeTracking';
 import {
@@ -106,7 +108,7 @@ export default function TrackingScreen() {
   const { intervalMs = 3000, theme, unitSystem } = useSettings();
   const insets = useSafeAreaInsets();
 
-  const { show, Toast } = useToast();
+  const { hideToast, showPersistent, showToast, Toast } = useToast();
 
   // --------------------------------------------------------------------------
   // State & Refs
@@ -310,6 +312,8 @@ export default function TrackingScreen() {
     const segIdx = segIndexRef.current;
     if (id != null) {
       try {
+        console.warn('[DBG] appendPointBoth');
+        hideToast();
         await appendPoint(id, segIdx, pt as any);
       } catch (e) {
         console.warn('[DBG] failed', { id, segIdx, pt }, e);
@@ -440,6 +444,9 @@ export default function TrackingScreen() {
   // ========================================================================
   const startTrackingHandler = useCallback(async () => {
     if (pressGuardRef.current) return;
+    console.warn('[DBG] startTrackingHandler');
+    showPersistent('Finding your location…');
+
     pressGuardRef.current = true;
     try {
       // prewarm off
@@ -498,12 +505,10 @@ export default function TrackingScreen() {
             return;
           }
 
-          // After seeding: forward all points
           lastTsRef.current = ts;
           const p: LatLngTs = { latitude, longitude, ts };
           appendPointBoth(p, { reportedSpeed: v ?? null, accuracy: acc ?? null });
 
-          // Warm-up countdown
           if (warmRemainingRef.current > 0) {
             const okAcc = accNum <= WARM_COUNT_ACC_MAX;
             const okSpd = USE_SPEED_FOR_WARMUP ? hasSpeed : true;
@@ -642,9 +647,9 @@ export default function TrackingScreen() {
 
       requestAnimationFrame(() => {
         if (totalPoints === 0) { 
-          show('No points registered — track discarded.'); 
+          showToast('No points registered — track discarded.'); 
         } else { 
-          show('Track saved to archive.');
+          showToast('Track saved to archive.');
         }
       });
 
@@ -754,15 +759,7 @@ export default function TrackingScreen() {
 // Presentational Subcomponents
 // TODO - move to components library
 // ============================================================================
-function Metric({ label, value }: { label: string; value: string }) {
-  const { theme } = useSettings();
-  return (
-    <View style={styles.metric}>
-      <Text style={styles.metricLabel(theme)}>{label}</Text>
-      <Text style={styles.metricValue(theme)}>{value}</Text>
-    </View>
-  );
-}
+
 
 function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
