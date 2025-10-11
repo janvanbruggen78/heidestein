@@ -26,7 +26,6 @@ class TrackingService : Service() {
     const val ACTION_START_OR_UPDATE = "START_OR_UPDATE"
     const val ACTION_UPDATE_NOTIFICATION = "UPDATE_NOTIFICATION"
     const val ACTION_STOP = "STOP"
-    // already in use in your project
     const val ACTION_JS_UPDATE_STATS = "JS_UPDATE_STATS"
   }
 
@@ -39,20 +38,18 @@ class TrackingService : Service() {
   private var startedForeground = false
   private var paused = false
 
-  // ticker state (local fallback counters)
+  // ticker / local fallback
   private var handler: Handler? = null
-  private var startMs: Long = System.currentTimeMillis()
+  private var lastTickerStartedAt: Long = 0L
   private var totalDistanceM: Double = 0.0
   private var lastLat: Double? = null
   private var lastLon: Double? = null
 
-  // --- Minimal cumulative-duration fallback (works without JS) ---
-  // Accumulates total duration of completed segments; survives pause/resume.
-  private var accDurMs: Long = 0L
-  // Start timestamp of the current live segment when tracking, null when paused.
-  private var segStartMs: Long? = null
+  // Minimal cumulative-duration fallback (survives pause/resume)
+  private var accDurMs: Long = 0L        // sum of finished segments
+  private var segStartMs: Long? = null   // start of current live segment; null when paused
 
-  // ---- Stats pushed from JS (preferred when present) ----
+  // JS-pushed stats (source of truth when present)
   private var jsDurationMs: Long? = null
   private var jsDistanceM: Double? = null
   private var jsAvgSpeed: Double? = null
@@ -79,11 +76,11 @@ class TrackingService : Service() {
         val newTitle = intent.getStringExtra("title")?.takeIf { it.isNotBlank() } ?: title
         title = newTitle
         ensureForeground(title, if (paused) textForPaused() else currentBody())
+        ensureTicker()
         return START_STICKY
       }
 
       ACTION_JS_UPDATE_STATS -> {
-        // Push from JS with exact UI totals (distance/duration/avg + status)
         trackId = intent.getStringExtra("trackId")
         statusFromJs = intent.getStringExtra("status")
 
@@ -93,21 +90,17 @@ class TrackingService : Service() {
 
         // keep fallback duration consistent with JS-driven state flips
         if (prevPaused && !paused) {
-          // we just resumed -> start a new live segment
           segStartMs = now
         } else if (!prevPaused && paused) {
-          // we just paused -> close live segment into accDurMs
           segStartMs?.let { accDurMs += (now - it).coerceAtLeast(0) }
           segStartMs = null
         }
-        // If we are tracking and segStartMs wasn't set yet (service freshly started), set it
         if (!paused && segStartMs == null) segStartMs = now
 
         if (intent.hasExtra("distanceMeters")) {
           jsDistanceM = intent.getDoubleExtra("distanceMeters", 0.0)
         }
         if (intent.hasExtra("durationMs")) {
-          // JS is the source of truth when available
           jsDurationMs = intent.getLongExtra("durationMs", 0L)
         }
         if (intent.hasExtra("avgSpeedMps")) {
@@ -115,8 +108,8 @@ class TrackingService : Service() {
         }
 
         ensureForeground(title, if (paused) textForPaused() else currentBody())
+        ensureTicker()
         if (prevPaused && !paused) {
-          // immediate refresh on resume (parity with START_OR_UPDATE branch)
           postNotification(title, currentBody())
         }
         return START_STICKY
@@ -133,14 +126,11 @@ class TrackingService : Service() {
 
         // Update cumulative fallback duration on state transitions
         if (prevPaused && !paused) {
-          // just resumed -> start live segment
           segStartMs = now
         } else if (!prevPaused && paused) {
-          // just paused -> close the live segment
           segStartMs?.let { accDurMs += (now - it).coerceAtLeast(0) }
           segStartMs = null
         }
-        // If tracking and we never set segStartMs (fresh start), start it now
         if (!paused && segStartMs == null) segStartMs = now
 
         title = newTitle
@@ -151,8 +141,9 @@ class TrackingService : Service() {
         distanceM = newDistance
         if (optionsChanged) startLocationUpdates()
 
+        ensureTicker()
         if (prevPaused && !paused) {
-          postNotification(title, currentBody()) // immediate refresh on resume
+          postNotification(title, currentBody())
         }
         return START_STICKY
       }
@@ -167,14 +158,21 @@ class TrackingService : Service() {
       else
         startForeground(NOTIF_ID, notif)
       startedForeground = true
-
-      // (re)start 1s ticker
-      startMs = System.currentTimeMillis()
-      handler?.removeCallbacksAndMessages(null)
-      handler?.post(tick)
+      ensureTicker()
     } else {
       postNotification(t, b)
     }
+  }
+
+  // 1s heartbeat, independent of GPS interval
+  private fun ensureTicker() {
+    val h = handler ?: return
+    // Avoid storms of re-posts: only re-arm when at least ~500ms passed since last arm.
+    val now = System.currentTimeMillis()
+    if (now - lastTickerStartedAt < 500) return
+    h.removeCallbacks(tick)
+    h.postDelayed(tick, 1000)
+    lastTickerStartedAt = now
   }
 
   private val tick = object : Runnable {
@@ -183,7 +181,9 @@ class TrackingService : Service() {
         val b = if (paused) textForPaused() else currentBody()
         postNotification(title, b)
       } finally {
-        handler?.postDelayed(this, 1000)
+        if (startedForeground) {
+          handler?.postDelayed(this, 1000)
+        }
       }
     }
   }
@@ -234,6 +234,7 @@ class TrackingService : Service() {
   override fun onDestroy() {
     try { callback?.let { fused.removeLocationUpdates(it) } } catch (_: Exception) {}
     handler?.removeCallbacksAndMessages(null)
+    startedForeground = false
     stopForeground(true)
     super.onDestroy()
   }
@@ -283,7 +284,7 @@ class TrackingService : Service() {
   private fun textForPaused(): String = "Paused — keeping service alive"
 
   private fun currentBody(): String {
-    // Prefer JS-provided totals (UI truth). If absent, use cumulative fallback that survives resume.
+    // Prefer JS totals; fallback survives resume
     val now = System.currentTimeMillis()
 
     val dur: Long = jsDurationMs ?: run {

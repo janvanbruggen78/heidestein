@@ -49,7 +49,7 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
       val i = Intent(rc, TrackingService::class.java).apply {
         action = TrackingService.ACTION_UPDATE_NOTIFICATION
         putExtra("title", title)
-        putExtra("body", body) // body is ignored when minimal/paused logic applies
+        putExtra("body", body)
       }
       ContextCompat.startForegroundService(rc, i)
       promise.resolve(null)
@@ -72,8 +72,7 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
   }
 
   /**
-   * New: push precise UI totals to the service so the sticky notification
-   * mirrors the TrackingScreen (distance, duration incl. pauses/resumes).
+   * New: push precise UI totals so the sticky notification mirrors the TrackingScreen.
    */
   @ReactMethod
   fun updateNotificationStats(params: ReadableMap, promise: Promise) {
@@ -83,7 +82,7 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
         if (params.hasKey("trackId")) putExtra("trackId", params.getString("trackId"))
         if (params.hasKey("status")) putExtra("status", params.getString("status"))
         if (params.hasKey("distanceMeters")) putExtra("distanceMeters", params.getDouble("distanceMeters"))
-        // JS number arrives as Double; service reads Long → cast here.
+        // Cast to Long; service reads a Long
         if (params.hasKey("durationMs")) putExtra("durationMs", params.getDouble("durationMs").toLong())
         if (params.hasKey("avgSpeedMps")) putExtra("avgSpeedMps", params.getDouble("avgSpeedMps"))
       }
@@ -94,7 +93,7 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
     }
   }
 
-  // Stubs to satisfy NativeEventEmitter warnings (even if you use DeviceEventEmitter)
+  // EventEmitter stubs
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Int) {}
 }
