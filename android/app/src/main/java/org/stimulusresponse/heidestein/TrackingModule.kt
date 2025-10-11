@@ -71,6 +71,29 @@ class TrackingModule(private val rc: ReactApplicationContext) : ReactContextBase
     }
   }
 
+  /**
+   * New: push precise UI totals to the service so the sticky notification
+   * mirrors the TrackingScreen (distance, duration incl. pauses/resumes).
+   */
+  @ReactMethod
+  fun updateNotificationStats(params: ReadableMap, promise: Promise) {
+    try {
+      val i = Intent(rc, TrackingService::class.java).apply {
+        action = TrackingService.ACTION_JS_UPDATE_STATS
+        if (params.hasKey("trackId")) putExtra("trackId", params.getString("trackId"))
+        if (params.hasKey("status")) putExtra("status", params.getString("status"))
+        if (params.hasKey("distanceMeters")) putExtra("distanceMeters", params.getDouble("distanceMeters"))
+        // JS number arrives as Double; service reads Long → cast here.
+        if (params.hasKey("durationMs")) putExtra("durationMs", params.getDouble("durationMs").toLong())
+        if (params.hasKey("avgSpeedMps")) putExtra("avgSpeedMps", params.getDouble("avgSpeedMps"))
+      }
+      ContextCompat.startForegroundService(rc, i)
+      promise.resolve(null)
+    } catch (e: Exception) {
+      promise.reject("ERR_NATIVE_UPDATE_STATS", e)
+    }
+  }
+
   // Stubs to satisfy NativeEventEmitter warnings (even if you use DeviceEventEmitter)
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Int) {}

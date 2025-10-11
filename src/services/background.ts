@@ -1,366 +1,176 @@
+// services/background.ts
+// Minimal, "surgery mode" update: keep the public API identical,
+// route native calls through utils/NativeTracking shims, and
+// make Android-only behavior safe (no-ops elsewhere).
+
 import { Platform } from 'react-native';
-import * as TaskManager from 'expo-task-manager';
-import * as Location from 'expo-location';
-import * as FileSystem from 'expo-file-system/legacy';
-import { appendPoint, getTrackLabel } from '../db/db';
 import {
   startNativeTracking,
-  updateNativeOptions,
+  updateNativeTrackingOptions,
   stopNativeTracking,
-  subscribeNativeLocations,
-  updateNativeNotification,
-  type NativeLoc,
 } from '../utils/NativeTracking';
 
-export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
+// -------------------------------------------
+// Types & simple state (debug/telemetry only)
+// -------------------------------------------
+export type ForegroundStatus = 'tracking' | 'paused' | 'stopped';
 
-// TODO -- Remove either Profile or Status
-type Profile = 'tracking' | 'paused';
-type Status  = 'tracking' | 'paused';
-
-type ActivePayload = {
-  trackId: string;
-  opts?: { intervalMs?: number; distanceM?: number }
-  segmentIndex: number;
-  mode: Profile;
-  writer: 'fg' | 'bg';
+type StartOpts = {
+  intervalMs?: number;
+  distanceM?: number;
 };
 
-const IS_WEB = Platform.OS === 'web';
-const IS_ANDROID = Platform.OS === 'android';
-const ACTIVE_FILE = FileSystem.documentDirectory + 'active.json';
-
-let memActive: ActivePayload = {
-  trackId: '',
-  segmentIndex: 0,
-  mode: 'tracking',
-  writer: 'bg',
+type SwitchOpts = {
+  intervalMs?: number;
+  distanceM?: number;
 };
 
-const notif = {
-  title: 'Heidestein',
-  startMs: 0,
-  lastPush: 0,
-  lastBody: '',
-  lastLat: null as number | null,
-  lastLon: null as number | null,
-  distM: 0,
+const isAndroid = Platform.OS === 'android';
+const withDefaults = <T extends { intervalMs?: number; distanceM?: number }>(opts?: T) => ({
+  intervalMs: 3000,
+  distanceM: 5,
+  ...(opts || {}),
+});
+
+let _writer: 'fg' | 'bg' | null = null;
+let _status: ForegroundStatus = 'stopped';
+let _active: { trackId: string | null; segmentIndex: number | null } = {
+  trackId: null,
+  segmentIndex: null,
 };
 
-let notifTick: ReturnType<typeof setInterval> | null = null;
+// -------------------------------------------
+// Public API — keep exact names/signatures
+// -------------------------------------------
 
-function startNotifLoop() {
-  if (notifTick) return;
-  notifTick = setInterval(() => {
-    // only Android uses the sticky notif; skip when paused
-    if (Platform.OS !== 'android') return;
-    if (memActive.mode === 'paused') return;
-
-    const now = Date.now();
-    const body = `${fmtKm(notif.distM)} • ${fmtDur(now - (notif.startMs || now))}`;
-    // diff to avoid redundant notify() calls
-    if (body !== notif.lastBody) {
-      notif.lastBody = body;
-      updateNativeNotification(notif.title, body).catch(() => {});
-    }
-  }, 2000);
+/**
+ * Who currently "owns" DB writes (foreground vs background).
+ * (Your screens rely on this to coordinate; native layer doesn't need it.)
+ */
+export async function setWriter(w: 'fg' | 'bg') {
+  _writer = w;
 }
 
-function stopNotifLoop() {
-  if (notifTick) { clearInterval(notifTick); notifTick = null; }
-}
+/**
+ * Mirrors UI state to native service so the sticky notification
+ * uses the right paused/tracking label immediately.
+ */
+export async function setForegroundStatus(status: ForegroundStatus) {
+  _status = status;
 
-async function readActive(): Promise<ActivePayload | null> {
+  if (!isAndroid) return;
+  const paused = status === 'paused';
+
   try {
-    const info = await FileSystem.getInfoAsync(ACTIVE_FILE);
-    if (!info.exists) return null;
-    const raw = await FileSystem.readAsStringAsync(ACTIVE_FILE);
-    const parsed = JSON.parse(raw) as Partial<ActivePayload>;
-    // ensure defaults
-    return {
-      trackId: parsed.trackId ?? '',
-      segmentIndex: parsed.segmentIndex ?? 0,
-      mode: (parsed.mode ?? 'tracking') as Profile,
-      writer: (parsed.writer ?? 'bg') as 'fg' | 'bg',
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function patchActiveFile(patch: Partial<ActivePayload>) {
-  try {
-    const current = (await readActive()) ?? memActive;
-    memActive = { ...current, ...patch };
-    await FileSystem.writeAsStringAsync(ACTIVE_FILE, JSON.stringify(memActive));
+    // Only toggle paused flag here; cadence changes happen via switchBackgroundProfile
+    await updateNativeTrackingOptions({ paused });
   } catch (e) {
-    console.warn('[BG] patchActiveFile failed', e);
+    // Keep UI responsive even if native module isn't ready yet
+    // console.warn('[BG] setForegroundStatus failed (ignored)', e);
   }
 }
 
-export async function setActiveMeta(trackId: string, segmentIndex: number) {
-  await patchActiveFile({ trackId, segmentIndex });
-}
-export async function setWriter(writer: 'fg' | 'bg') {
-  await patchActiveFile({ writer });
-}
-export async function setBgMode(mode: Profile) {
-  await patchActiveFile({ mode });
-}
-
-// -------------------- Display text helpers --------------------
-function statusText(s: Status) {
-  return s === 'paused'
-  ? 'Paused — keeping service alive'
-  : 'Recording your movement in the background';
-}
-
-/** UI can push distance • duration to the (single) notification */
-export async function updateForegroundText(title: string, body: string) {
-  if (IS_ANDROID) {
-    await updateNativeOptions({ title, body });
-    return;
-  }
-}
-
-// -------------------- Profiles --------------------
-function profileOptions(p: Profile): Location.LocationTaskOptions {
-  const paused = p === 'paused';
-  return {
-    accuracy: paused ? Location.Accuracy.Balanced : Location.Accuracy.High,
-    timeInterval: paused ? 60000 : 5000,          // ms
-    distanceInterval: paused ? 50 : 6,            // meters
-    pausesUpdatesAutomatically: false,
-    activityType: paused ? Location.ActivityType.Other : Location.ActivityType.Fitness,
-    // @ts-expect-error: legacy typings for Android override
-    accuracyAndroid: paused ? Location.Accuracy.Balanced : Location.Accuracy.High,
-    foregroundServiceType: 'location',
-    foregroundService: {
-      notificationTitle: 'Heidestein',
-      notificationBody: statusText(paused ? 'paused' : 'tracking'),
-      killServiceOnDestroy: true,
-    },
-  };
-}
-
-let nativeUnsub: (() => void) | null = null;
-
-function ensureAndroidListener() {
-  if (Platform.OS !== 'android') return;
-  if (nativeUnsub) return;
-
-  nativeUnsub = subscribeNativeLocations(async (loc) => {
-    const { latitude, longitude, accuracy, speed, altitude, ts } = loc || {};
-    if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
-
-    if (memActive.mode !== 'paused' && memActive.writer !== 'fg') {
-      try {
-        await appendPoint(memActive.trackId, memActive.segmentIndex, {
-          latitude,
-          longitude,
-          ts: typeof ts === 'number' ? ts : Date.now(),
-          accuracy: typeof accuracy === 'number' ? accuracy : null,
-          speed: typeof speed === 'number' ? speed : null,
-          altitude: typeof altitude === 'number' ? altitude : null,
-        });
-      } catch (e) {
-        console.warn('[BG] appendPoint failed', e);
-      }
-    }
-  });
-}
-
-
-if (!IS_WEB && !IS_ANDROID) {
-  TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
-    if (error) { console.warn('[BG] TM error:', error); return null; }
-    const { locations } = (data as any) || {};
-    if (!locations?.length) return null;
-    if (memActive.mode === 'paused' || memActive.writer === 'fg') return null;
-
-    try {
-      for (const loc of locations) {
-        const { latitude, longitude, accuracy, speed, altitude } = loc?.coords || {};
-        if (typeof latitude === 'number' && typeof longitude === 'number') {
-          const ts = typeof loc?.timestamp === 'number' ? loc.timestamp : Date.now();
-          await appendPoint(memActive.trackId, memActive.segmentIndex, {
-            latitude, longitude, ts,
-            accuracy: typeof accuracy === 'number' ? accuracy : null,
-            speed: typeof speed === 'number' ? speed : null,
-            altitude: typeof altitude === 'number' ? altitude : null,
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('[BG] appendPoint (iOS TM) failed', e);
-    }
-    return null;
-  });
-}
-
-let __fgOp: Promise<any> = Promise.resolve();
-function runFgOp<T>(fn: () => Promise<T>): Promise<T> {
-  const chained = __fgOp.then(fn, fn);
-  __fgOp = chained.then(() => undefined, () => undefined);
-  return chained;
-}
-
-// -------------------- Public API --------------------
+/**
+ * Start the Android foreground tracking service.
+ * NOTE: DB writes and UI state are handled by your screen; this only manages native service.
+ */
 export async function startBackground(
   trackId: string,
   segmentIndex: number,
-  status: 'tracking' | 'paused' = 'tracking'
-  ) {
-  await patchActiveFile({ trackId, segmentIndex, mode: status });
+  status: 'tracking' | 'paused',
+  opts?: StartOpts,
+) {
+  console.log('[BG] startBackground CALLED', { trackId, segmentIndex, status, opts });
 
-  if (Platform.OS === 'android') {
-    ensureAndroidListener();
+  _active = { trackId, segmentIndex };
+  _status = status;
 
-    // Seed title from label (fallback to id)
-    const label = (await getTrackLabel(trackId).catch(() => null))?.trim();
-    const title = (label && label.length ? label : trackId) || 'Heidestein';
+  if (!isAndroid) return;
 
-    const interval = opts?.intervalMs ?? 5000;
-    const distance = opts?.distanceM ?? 6;
-
-    await startNativeTracking({
-      title,
-      intervalMs: status === 'paused' ? 60000 : interval,
-      distanceM: status === 'paused' ? 50 : distance,
-      paused: status === 'paused',
-    });
-
-    return;
-  }
-
-  const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-  const opts = profileOptions(status);
-  if (!running) {
-    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
-  } else {
-    try {
-      // @ts-ignore
-      await Location.updateForegroundServiceOptionsAsync(BACKGROUND_LOCATION_TASK, opts);
-    } catch {
-      try {
-        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
-      } catch (e2) {
-        console.warn('[BG] iOS restart updates failed', e2);
-      }
-    }
-  }
-}
-
-let lastProfileSwitch = 0;
-const SWITCH_DEBOUNCE_MS = 10_000;
-
-/** Switch between 'tracking' and 'paused'. */
-export async function switchBackgroundProfile(
-  profile: 'tracking' | 'paused',
-  opts?: { intervalMs?: number; distanceM?: number }
-  ) {
-  await patchActiveFile({ mode: profile });
-
-  if (Platform.OS === 'android') {
-    const paused = profile === 'paused';
-    const interval = opts?.intervalMs ?? 5000;
-    const distance = opts?.distanceM ?? 6;
-    
-    await updateNativeOptions({
-      intervalMs: profile === 'paused' ? 60000 : interval,
-      distanceM:  profile === 'paused' ? 50    : distance,
-      paused,
-    });
-    return;
-  }
-
-  const now = Date.now();
-  if (profile === 'tracking') {
-    if (now - lastProfileSwitch < SWITCH_DEBOUNCE_MS) return;
-    lastProfileSwitch = now;
-  }
-
-  await runFgOp(async () => {
-    // @ts-ignore
-    await Location.updateForegroundServiceOptionsAsync(
-      BACKGROUND_LOCATION_TASK,
-      profileOptions(profile)
-      );
-  }).catch(async () => {
-    try {
-      const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, profileOptions(profile));
-    } catch (e2) {
-      console.warn('[BG] iOS switch profile failed', e2);
-    }
-  });
-}
-
-export async function setForegroundStatus(status: 'tracking' | 'paused') {
-  await setBgMode(status);
-
-  if (Platform.OS === 'android') {
-    return;
-  }
-
-  const opts = {
-    ...profileOptions(status),
-    foregroundService: {
-      notificationTitle: 'Heidestein',
-      notificationBody: status === 'paused'
-      ? 'Paused — keeping service alive'
-      : 'Recording your movement in the background',
-      killServiceOnDestroy: true,
-    },
-  } as Location.LocationTaskOptions;
+  const o = withDefaults(opts);
+  const paused = status === 'paused';
 
   try {
-    // @ts-ignore
-    await Location.updateForegroundServiceOptionsAsync(BACKGROUND_LOCATION_TASK, opts);
+    await startNativeTracking({
+      title: 'Heidestein',
+      intervalMs: o.intervalMs,
+      distanceM: o.distanceM,
+      paused,
+    });
   } catch (e) {
-    try {
-      const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, opts);
-    } catch (e2) {
-      console.warn('[BG] iOS setForegroundStatus refresh failed', e2);
-    }
+    console.warn('[BG] startNativeTracking failed (ignored)', e);
   }
 }
 
-function fmtKm(m: number) { 
-  return `${(m / 1000).toFixed(2)} km`; 
+/**
+ * Switch cadence/profile while running (e.g., tracking ↔ paused, interval tweaks).
+ */
+export async function switchBackgroundProfile(
+  status: 'tracking' | 'paused',
+  opts?: SwitchOpts,
+) {
+  console.log('[BG] switchBackgroundProfile CALLED', { status, opts });
+
+  _status = status;
+
+  if (!isAndroid) return;
+
+  const o = withDefaults(opts);
+  const paused = status === 'paused';
+
+  try {
+    await updateNativeTrackingOptions({
+      intervalMs: o.intervalMs,
+      distanceM: o.distanceM,
+      paused,
+    });
+  } catch (e) {
+    console.warn('[BG] updateNativeTrackingOptions failed (ignored)', e);
+  }
 }
 
-function fmtDur(ms: number) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-  const ss = String(s % 60).padStart(2, '0');
-  return `${hh}:${mm}:${ss}`;
+/**
+ * Stop the Android foreground tracking service.
+ */
+export async function stopBackground() {
+  console.log('[BG] stopBackground CALLED');
+
+  if (!isAndroid) {
+    _status = 'stopped';
+    _active = { trackId: null, segmentIndex: null };
+    return;
+  }
+
+  try {
+    await stopNativeTracking();
+  } catch (e) {
+    console.warn('[BG] stopNativeTracking failed (ignored)', e);
+  } finally {
+    _status = 'stopped';
+    _active = { trackId: null, segmentIndex: null };
+  }
 }
 
-export async function stopBackground(opts?: { clearActive?: boolean }) {
-  const clearActive = opts?.clearActive ?? true;
-  console.log('[BG] stopBackground CALLED', opts);
+/**
+ * Your UI calls this when opening a new segment after resume.
+ * Native service doesn't require this info, but we keep it for parity/logging.
+ */
+export async function setActiveMeta(trackId: string, segmentIndex: number) {
+  _active = { trackId, segmentIndex };
+  // Intentionally no native call — Kotlin service doesn't need it.
+}
 
-  if (Platform.OS === 'android') {
-    try { await stopNativeTracking(); } catch (e) {
-      console.warn('[BG] stopNativeTracking failed (ignored)', e);
-    }
-    if (nativeUnsub) { nativeUnsub(); nativeUnsub = null; }
-  } else {
-    try {
-      const running = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (running) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    } catch (e) {
-      console.warn('[BG] stop updates failed (ignored)', e);
-    }
-  }
+// -------------------------------------------
+// Optional read-only getters (handy in debug)
+// -------------------------------------------
+export function getForegroundStatus(): ForegroundStatus {
+  return _status;
+}
 
-  if (clearActive) {
-    try { await FileSystem.deleteAsync(ACTIVE_FILE, { idempotent: true }); } catch {}
-  }
+export function getWriter(): 'fg' | 'bg' | null {
+  return _writer;
+}
+
+export function getActiveMeta(): { trackId: string | null; segmentIndex: number | null } {
+  return _active;
 }

@@ -202,6 +202,19 @@ export default function TrackingScreen() {
     }, []),
   );
 
+  // Keep native notification in sync with UI totals.
+  useEffect(() => {
+    // Only show stats when a track is active
+    if (!tracking || !trackId) return;
+    updateNativeNotification?.({
+      trackId,
+      status: paused ? 'paused' : 'tracking',
+      distanceMeters: distance,
+      durationMs,
+      avgSpeedMps: durationMs > 0 ? distance / (durationMs / 1000) : 0,
+    }).catch?.(() => {});
+  }, [tracking, paused, distance, durationMs, avgSpeed, trackId, uiSecondTick]);
+
   // Permissions
   useEffect(() => {
     (async () => {
